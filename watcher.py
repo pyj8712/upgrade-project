@@ -1,8 +1,8 @@
 """
 PDF 폴더 실시간 감시 모드
 
-pdf/ 폴더를 감시하다가 파일이 감지되면 자동으로 처리합니다.
-  처리 성공 → done/ 폴더로 이동
+before/ 폴더를 감시하다가 파일이 감지되면 자동으로 처리합니다.
+  처리 성공 → 목적 폴더로 이동
   처리 실패 → error/ 폴더로 이동
 """
 
@@ -20,7 +20,7 @@ from handlers.pymupdf_handler import process_pdf
 from handlers.local_ocr_handler import process_receipt
 
 BASE_DIR   = Path(__file__).parent
-PDF_DIR    = BASE_DIR / "pdf"
+PDF_DIR    = Path(r"C:\Users\yujin\OneDrive\Desktop\before")
 ERROR_DIR  = BASE_DIR / "error"
 
 SUPPORTED_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp"}
@@ -137,7 +137,7 @@ def run():
     PDF_DIR.mkdir(exist_ok=True)
     ERROR_DIR.mkdir(exist_ok=True)
 
-    # 시작 시 pdf/ 폴더에 이미 있는 파일 처리
+    # 시작 시 before/ 폴더에 이미 있는 파일 처리
     existing = [f for f in PDF_DIR.iterdir()
                 if f.is_file() and f.suffix.lower() in SUPPORTED_EXTS]
     if existing:

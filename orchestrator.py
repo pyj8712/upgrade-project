@@ -16,7 +16,7 @@ import fitz
 from handlers.pymupdf_handler import detect_type, process_pdf
 from handlers.local_ocr_handler import process_receipt
 
-PDF_DIR = Path(__file__).parent / "pdf"
+PDF_DIR = Path(r"C:\Users\yujin\OneDrive\Desktop\before")
 
 DEST_SALES   = Path(r"C:\Users\yujin\OneDrive\Desktop\박유진\1. 매출서류")
 DEST_FINANCE = Path(r"C:\Users\yujin\OneDrive\Desktop\박유진\0-1. 재무관리")
