@@ -180,6 +180,6 @@ def process_receipt(file_path: Path) -> str:
         amount_str = sanitize(_extract_amount(text))
 
         ext = file_path.suffix.lower()
-        return f"{date_str} 영수증({amount_str}원){ext}"
+        return f"{date_str} {amount_str} 원{ext}"
     except Exception as e:
         raise RuntimeError(f"Windows OCR 처리 실패: {str(e)[:120]}")
