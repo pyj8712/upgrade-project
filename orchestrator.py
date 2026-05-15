@@ -28,7 +28,7 @@ MIN_TEXT_CHARS = 50
 
 def _dest_folder(file_type: str, new_name: str) -> Path:
     """파일 유형에 따라 목적 폴더를 반환 (월별 하위폴더 없음)."""
-    if file_type == "매입세금계산서":
+    if file_type in ("매입세금계산서", "매입거래명세서"):
         return DEST_PURCHASE
     return DEST_SALES if file_type in ("세금계산서", "거래명세서") else DEST_FINANCE
 

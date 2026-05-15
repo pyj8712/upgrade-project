@@ -130,11 +130,27 @@ def _extract_delivery_note(lines: list[str]) -> tuple:
                 date_str = m.group(1) + m.group(2) + m.group(3)
                 break
 
+    # 공급자: (법인명) 첫 번째 매칭 → "공급자" 레이블 순으로 탐색
+    supplier = None
+    matches = re.findall(r"\(법인명\)\s*(.+)", "\n".join(lines))
+    if matches:
+        supplier = matches[0].strip()
+    if not supplier:
+        for i, line in enumerate(lines):
+            if line in ("공급자", "상호") and i + 1 < len(lines):
+                candidate = lines[i + 1].strip()
+                if candidate and not re.match(r"^[\d\-]+$", candidate):
+                    supplier = candidate
+                    break
+
     recipient = None
     for i, line in enumerate(lines):
         if line == "거래처명" and i + 1 < len(lines):
             recipient = lines[i + 1].strip()
             break
+    # 거래처명 레이블이 없으면 (법인명) 두 번째 매칭 사용
+    if not recipient and len(matches) >= 2:
+        recipient = matches[1].strip()
 
     item_joyo = None
     for i, line in enumerate(lines):
@@ -163,7 +179,7 @@ def _extract_delivery_note(lines: list[str]) -> tuple:
                     break
             break
 
-    return date_str, recipient, item_joyo
+    return date_str, supplier, recipient, item_joyo
 
 
 # ── 공통 처리 ──────────────────────────────────────────────────────────
@@ -185,10 +201,15 @@ def process_pdf(pdf_path: Path, doc_type: str, lines: list[str]) -> tuple[str, s
             return f"{date_part} 세금계산서({r}-{it}).pdf", "세금계산서"
 
     if doc_type == "거래명세서":
-        date_str, recipient, joyo = _extract_delivery_note(lines)
+        date_str, supplier, recipient, joyo = _extract_delivery_note(lines)
         date_part = date_str or "날짜미상"
-        r = sanitize(recipient) if recipient else "거래처미상"
         j = sanitize(joyo) if joyo else "적요미상"
-        return f"{date_part} 거래명세서({r}-{j}).pdf", "거래명세서"
+
+        if recipient and KAIZER_LAB in recipient:
+            s = sanitize(supplier) if supplier else "공급자미상"
+            return f"{date_part} 거래명세서({s}-{j}).pdf", "매입거래명세서"
+        else:
+            r = sanitize(recipient) if recipient else "거래처미상"
+            return f"{date_part} 거래명세서({r}-{j}).pdf", "거래명세서"
 
     raise ValueError(f"알 수 없는 문서 유형: {doc_type}")
