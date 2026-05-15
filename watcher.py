@@ -27,7 +27,6 @@ ERROR_DIR  = BASE_DIR / "error"
 SUPPORTED_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
 _processing: set[Path] = set()
-_opened_folders: set[Path] = set()
 _lock = threading.Lock()
 
 
@@ -95,9 +94,7 @@ def _process(file_path: Path):
         shutil.move(str(file_path), str(dest))
         _log(f"{file_path.name}  →  {dest}", "OK")
 
-        if dest_dir not in _opened_folders:
-            _opened_folders.add(dest_dir)
-            os.startfile(str(dest_dir))
+        os.startfile(str(dest_dir))
 
     except Exception as e:
         ERROR_DIR.mkdir(exist_ok=True)
