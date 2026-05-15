@@ -18,8 +18,9 @@ from handlers.local_ocr_handler import process_receipt
 
 PDF_DIR = Path(r"C:\Users\yujin\OneDrive\Desktop\before")
 
-DEST_SALES   = Path(r"C:\Users\yujin\OneDrive\Desktop\박유진\1. 매출서류")
-DEST_FINANCE = Path(r"C:\Users\yujin\OneDrive\Desktop\박유진\0-1. 재무관리")
+DEST_SALES    = Path(r"C:\Users\yujin\OneDrive\Desktop\박유진\1. 매출서류")
+DEST_PURCHASE = Path(r"C:\Users\yujin\OneDrive\Desktop\박유진\2. 매입서류")
+DEST_FINANCE  = Path(r"C:\Users\yujin\OneDrive\Desktop\박유진\0-1. 재무관리")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 MIN_TEXT_CHARS = 50
@@ -27,6 +28,8 @@ MIN_TEXT_CHARS = 50
 
 def _dest_folder(file_type: str, new_name: str) -> Path:
     """파일 유형에 따라 목적 폴더를 반환 (월별 하위폴더 없음)."""
+    if file_type == "매입세금계산서":
+        return DEST_PURCHASE
     return DEST_SALES if file_type in ("세금계산서", "거래명세서") else DEST_FINANCE
 
 
@@ -44,7 +47,8 @@ def _classify(file_path: Path) -> tuple[str, list | None]:
         doc.close()
 
         if len(text.strip()) >= MIN_TEXT_CHARS:
-            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            lines = [l.replace('\xa0', ' ').strip() for l in text.splitlines()]
+            lines = [l for l in lines if l]
             doc_type = detect_type(lines)
             if doc_type:
                 return doc_type, lines
@@ -79,8 +83,8 @@ def run():
             file_type, lines = _classify(file_path)
 
             if file_type in ("세금계산서", "거래명세서"):
-                new_name = process_pdf(file_path, file_type, lines)
-                results.append((file_path, file_type, new_name, None))
+                new_name, effective_type = process_pdf(file_path, file_type, lines)
+                results.append((file_path, effective_type, new_name, None))
 
             elif file_type == "영수증":
                 new_name = process_receipt(file_path)
@@ -111,6 +115,7 @@ def run():
         print("취소했습니다.")
         return
 
+    opened_folders: set[Path] = set()
     for file_path, file_type, new_name, error in results:
         if error or new_name is None:
             print(f"건너뜀: {file_path.name}")
@@ -123,8 +128,12 @@ def run():
             continue
         shutil.move(str(file_path), str(dest))
         print(f"완료: {file_path.name} → {dest}")
+        opened_folders.add(dest_dir)
 
     print("\n모든 작업이 완료되었습니다.")
+
+    for folder in opened_folders:
+        os.startfile(str(folder))
 
 
 if __name__ == "__main__":

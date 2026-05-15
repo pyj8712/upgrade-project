@@ -7,7 +7,7 @@ SKIP_KEYWORDS = {"합계금액", "현금", "수표", "어음", "외상", "비고
 
 def get_lines(pdf_path: Path) -> list[str]:
     doc = fitz.open(str(pdf_path))
-    lines = [l.strip() for l in doc[0].get_text().splitlines()]
+    lines = [l.replace('\xa0', ' ').strip() for l in doc[0].get_text().splitlines()]
     doc.close()
     return [l for l in lines if l]
 
@@ -27,42 +27,96 @@ def sanitize(s: str) -> str:
 
 # ── 세금계산서 ─────────────────────────────────────────────────────────
 
+def _parse_date(s: str) -> str | None:
+    """'YYYY/MM/DD', 'YYYY. MM. DD' 등 단일 문자열에서 날짜 추출."""
+    m = re.match(r"(\d{4})[/.\s-]+(\d{1,2})[/.\s-]+(\d{1,2})$", s.strip())
+    if m:
+        return f"{m.group(1)}{m.group(2).zfill(2)}{m.group(3).zfill(2)}"
+    return None
+
+
 def _extract_tax_invoice(lines: list[str]) -> tuple:
     date_str = None
+
+    # 방법 1: '작성일자' 레이블 주변에서 날짜 탐색
     for i, line in enumerate(lines):
-        if re.match(r"^\d{4}$", line) and i + 2 < len(lines):
-            month = lines[i + 1].zfill(2)
-            day = lines[i + 2].zfill(2)
-            if re.match(r"^\d{1,2}$", month) and re.match(r"^\d{1,2}$", day):
-                date_str = f"{line}{month}{day}"
+        if "작성일자" in line:
+            for j in range(i, min(i + 5, len(lines))):
+                d = _parse_date(lines[j])
+                if d:
+                    date_str = d
+                    break
+            if date_str:
                 break
+
+    # 방법 2: 한 줄에 'YYYY/MM/DD' 형식으로 존재
+    if not date_str:
+        for line in lines:
+            d = _parse_date(line)
+            if d and d[:4] in ("2024", "2025", "2026", "2027"):
+                date_str = d
+                break
+
+    # 방법 3: 연도·월·일이 연속된 별도 줄 (기존 방식)
+    if not date_str:
+        for i, line in enumerate(lines):
+            if re.match(r"^\d{4}$", line) and i + 2 < len(lines):
+                month = lines[i + 1].zfill(2)
+                day = lines[i + 2].zfill(2)
+                if re.match(r"^\d{1,2}$", month) and re.match(r"^\d{1,2}$", day):
+                    date_str = f"{line}{month}{day}"
+                    break
 
     matches = re.findall(r"\(법인명\)\s*(.+)", "\n".join(lines))
-    recipient = matches[1].strip() if len(matches) >= 2 else (matches[0].strip() if matches else None)
+    supplier  = matches[0].strip() if len(matches) >= 1 else None
+    recipient = matches[1].strip() if len(matches) >= 2 else None
 
     item = None
-    for i, line in enumerate(lines):
-        if re.match(r"^\d{2}$", line) and i + 1 < len(lines):
-            nxt = lines[i + 1]
-            m = re.match(r"^\d{2}\s+(.+)", nxt)
-            if m:
-                item = m.group(1).strip()
-                if i + 2 < len(lines):
-                    cont = lines[i + 2]
-                    if not re.match(r"^[\d,]+$", cont) and cont not in SKIP_KEYWORDS:
-                        item += " " + cont
+
+    # 방법 A: 'MM DD 품목명 ...' 이 한 줄에 존재
+    for line in lines:
+        m = re.match(r"^\d{2}\s+\d{2}\s+(.+)", line)
+        if m:
+            raw = m.group(1).strip()
+            # 뒤에 붙은 숫자(수량·단가·금액) 제거
+            raw = re.sub(r"(\s+[\d,]+){2,}$", "", raw).strip()
+            if raw and raw not in SKIP_KEYWORDS and not re.match(r"^[\d,]+$", raw):
+                item = raw
                 break
-            if re.match(r"^\d{2}$", nxt) and i + 2 < len(lines):
-                candidate = lines[i + 2]
-                if not re.match(r"^[\d,]+$", candidate) and candidate not in SKIP_KEYWORDS:
-                    item = candidate.strip()
-                    if i + 3 < len(lines):
-                        cont = lines[i + 3]
+
+    # 방법 B: 'MM DD'가 한 줄(\xa0 정규화 후), 다음 줄이 품목명
+    if not item:
+        for i, line in enumerate(lines):
+            if re.match(r"^\d{2}\s+\d{2}$", line) and i + 1 < len(lines):
+                candidate = lines[i + 1].strip()
+                if candidate and not re.match(r"^[\d,]+$", candidate) and candidate not in SKIP_KEYWORDS:
+                    item = candidate
+                    break
+
+    # 방법 C: 월이 단독 줄, 다음 줄에 '일 품목명' 또는 일이 단독 줄
+    if not item:
+        for i, line in enumerate(lines):
+            if re.match(r"^\d{2}$", line) and i + 1 < len(lines):
+                nxt = lines[i + 1]
+                m = re.match(r"^\d{2}\s+(.+)", nxt)
+                if m:
+                    item = m.group(1).strip()
+                    if i + 2 < len(lines):
+                        cont = lines[i + 2]
                         if not re.match(r"^[\d,]+$", cont) and cont not in SKIP_KEYWORDS:
                             item += " " + cont
                     break
+                if re.match(r"^\d{2}$", nxt) and i + 2 < len(lines):
+                    candidate = lines[i + 2]
+                    if not re.match(r"^[\d,]+$", candidate) and candidate not in SKIP_KEYWORDS:
+                        item = candidate.strip()
+                        if i + 3 < len(lines):
+                            cont = lines[i + 3]
+                            if not re.match(r"^[\d,]+$", cont) and cont not in SKIP_KEYWORDS:
+                                item += " " + cont
+                        break
 
-    return date_str, recipient, item
+    return date_str, supplier, recipient, item
 
 
 # ── 거래명세서 ─────────────────────────────────────────────────────────
@@ -114,19 +168,27 @@ def _extract_delivery_note(lines: list[str]) -> tuple:
 
 # ── 공통 처리 ──────────────────────────────────────────────────────────
 
-def process_pdf(pdf_path: Path, doc_type: str, lines: list[str]) -> str:
+KAIZER_LAB = "카이저랩"
+
+
+def process_pdf(pdf_path: Path, doc_type: str, lines: list[str]) -> tuple[str, str]:
     if doc_type == "세금계산서":
-        date_str, recipient, item = _extract_tax_invoice(lines)
+        date_str, supplier, recipient, item = _extract_tax_invoice(lines)
         date_part = date_str or "날짜미상"
-        r = sanitize(recipient) if recipient else "거래처미상"
         it = sanitize(item).replace(" ", "") if item else "품목미상"
-        return f"{date_part} 세금계산서({r}-{it}).pdf"
+
+        if recipient and KAIZER_LAB in recipient:
+            s = sanitize(supplier) if supplier else "공급자미상"
+            return f"{date_part} 세금계산서({s}-{it}).pdf", "매입세금계산서"
+        else:
+            r = sanitize(recipient) if recipient else "거래처미상"
+            return f"{date_part} 세금계산서({r}-{it}).pdf", "세금계산서"
 
     if doc_type == "거래명세서":
         date_str, recipient, joyo = _extract_delivery_note(lines)
         date_part = date_str or "날짜미상"
         r = sanitize(recipient) if recipient else "거래처미상"
         j = sanitize(joyo) if joyo else "적요미상"
-        return f"{date_part} 거래명세서({r}-{j}).pdf"
+        return f"{date_part} 거래명세서({r}-{j}).pdf", "거래명세서"
 
     raise ValueError(f"알 수 없는 문서 유형: {doc_type}")
