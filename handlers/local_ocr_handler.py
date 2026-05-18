@@ -6,7 +6,7 @@ from pathlib import Path
 import fitz
 
 _TOTAL_KEYWORDS = [
-    "승인금액", "합계금액", "청구금액", "결제금액",
+    "카드결제", "승인금액", "합계금액", "청구금액", "결제금액",
     "수납요금", "총요금", "합계", "총액", "청구액",
 ]
 _SUPPLY_KEYWORDS = ["공급가액", "공급금액", "판매금액"]
@@ -57,8 +57,12 @@ def _normalize_ko(s: str) -> str:
 
 
 def _normalize_num(s: str) -> str:
-    """숫자 콤마 뒤 공백 제거 ('40, 000' → '40,000')."""
-    return re.sub(r"(\d),\s+(\d)", r"\1,\2", s)
+    """숫자 콤마 뒤 공백 제거 + 천단위 마침표 → 콤마 변환."""
+    # '40, 000' → '40,000'
+    s = re.sub(r"(\d),\s+(\d)", r"\1,\2", s)
+    # '39.500' → '39,500' (마침표가 천단위 구분자인 경우: 정확히 3자리 뒤)
+    s = re.sub(r"(\d)\.(\d{3})(?!\d)", r"\1,\2", s)
+    return s
 
 
 def _extract_date(text: str) -> str:
