@@ -14,10 +14,11 @@ def get_lines(pdf_path: Path) -> list[str]:
 
 def detect_type(lines: list[str]) -> str | None:
     joined = "\n".join(lines)
+    # 거래명세서/표를 먼저 확인 (문서 하단에 '전자세금계산서' 언급 포함될 수 있음)
+    if "거래명세" in joined or "거 래 명 세" in joined:
+        return "거래명세서"
     if "전자세금계산서" in joined:
         return "세금계산서"
-    if "거래명세서" in joined:
-        return "거래명세서"
     return None
 
 
@@ -137,21 +138,30 @@ def _extract_delivery_note(lines: list[str]) -> tuple:
                 date_str = f"{m.group(1)}{m.group(2).zfill(2)}{m.group(3).zfill(2)}"
                 break
 
-    # 공급자: '상호(법인명)' 또는 '상호' 레이블로 탐색 (Format 1·2 모두 대응)
+    # 공급자: '상호' 레이블 기준으로 탐색, 귀중(수신자) 줄은 제외
     supplier = None
     for i, line in enumerate(lines):
         if re.match(r"^상호", line):
-            # 같은 줄에 회사명이 있는 경우: '상호(법인명) 주식회사 산소프트'
+            # 같은 줄에 회사명: '상호(법인명) 주식회사 산소프트' 또는 '상호 (주)카이저랩'
             m = re.match(r"^상호[^\s]*\s+(.+)", line)
-            if m and m.group(1).strip():
-                supplier = m.group(1).strip()
-                break
-            # 다음 줄에 회사명이 있는 경우: '상호' / '(주)카이저랩'
-            if i + 1 < len(lines):
-                candidate = lines[i + 1].strip()
-                if candidate and not re.match(r"^[\d\-\s]+$", candidate):
-                    supplier = candidate
+            if m:
+                raw = re.sub(r"(성명|대표자?|사업장).*$", "", m.group(1)).strip()
+                if len(raw) > 2:
+                    supplier = raw
                     break
+            # 다음 줄 이후에서 회사명 탐색 (합쳐진 텍스트, 괄호 잘림 등 대응)
+            for j in range(i + 1, min(i + 25, len(lines))):
+                raw = re.sub(r"(성명|대표자?|사업장주소).*$", "", lines[j]).strip()
+                if len(raw) <= 2 or re.match(r"^[\d\-\(\)\s,\.]+$", raw):
+                    continue
+                # 귀중(수신자) 줄이면 건너뜀
+                is_recipient = ("귀중" in raw or
+                                (j + 1 < len(lines) and "귀중" in lines[j + 1]))
+                if not is_recipient and re.match(r"^(주식회사|㈜|\(주\))", raw):
+                    supplier = raw
+                    break
+            if supplier:
+                break
 
     # 거래처 (buyer): '거래처명' 레이블로 탐색
     recipient = None
@@ -160,6 +170,7 @@ def _extract_delivery_note(lines: list[str]) -> tuple:
             recipient = lines[i + 1].strip()
             break
 
+    # 품목: Format 2 (MM/DD 접두사) → Format 1 폴백 (한글 포함 실질 품목명)
     item_joyo = None
     for i, line in enumerate(lines):
         if re.match(r"^\d{2}/\d{2}\s+.+", line):
@@ -176,7 +187,6 @@ def _extract_delivery_note(lines: list[str]) -> tuple:
                                 and not re.match(r"^\d{2}/\d{2}", cont)):
                             joyo_raw += cont
 
-                    # 품목명이 "제품명(장소 ...건)" 형식이면 "장소 제품명건" 으로 조합
                     core_m = re.match(r"^(.+?)\((.+?)\s+\S+건\)$", product_text)
                     if core_m:
                         core = core_m.group(1).strip().replace(" ", "")
@@ -186,6 +196,23 @@ def _extract_delivery_note(lines: list[str]) -> tuple:
                         item_joyo = joyo_raw
                     break
             break
+
+    # Format 1 폴백: MM/DD 패턴 없을 때 한글 포함 품목명 직접 탐색
+    _ADMIN = re.compile(
+        r"^(상호|등록번호|사업장|업태|종목|대표|전화|주소|귀중|원정|계좌번호|"
+        r"발행|메일|담당|이\s*하\s*여\s*백|거\s*래\s*명\s*세|공|급|자|아래와|"
+        r"주식회사|㈜|\(주\))"
+    )
+    if not item_joyo:
+        for line in lines:
+            if (len(line) > 5
+                    and re.search(r"[가-힣]{2,}", line)
+                    and not re.match(r"^[\d,\.\s￦]+$", line)
+                    and not _ADMIN.match(line)
+                    and not re.match(r"^\d{4}년", line)
+                    and line not in SKIP_KEYWORDS):
+                item_joyo = line.strip()
+                break
 
     return date_str, supplier, recipient, item_joyo
 
