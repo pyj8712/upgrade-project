@@ -131,10 +131,12 @@ def _extract_amount(text: str) -> str:
     norm_text = _normalize_num(text)
 
     # 1단계: 전체 문서에서 supply × 1.1 ≈ total 쌍 탐색
-    # - 수신전화번호·사업자번호 등 잡숫자가 섞여도 올바른 쌍이 있으면 우선 선택
+    # 대시 직후 숫자(사업자번호·전화번호 끝자리)는 금액 후보에서 제외
     all_amts = set()
-    for num in re.findall(r"[\d,]+", norm_text):
-        val = re.sub(r"[^0-9]", "", num)
+    for m in re.finditer(r"[\d,]+", norm_text):
+        if m.start() > 0 and norm_text[m.start() - 1] == '-':
+            continue
+        val = re.sub(r"[^0-9]", "", m.group())
         if _is_valid_amount(val):
             all_amts.add(int(val))
 
