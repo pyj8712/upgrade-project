@@ -122,6 +122,7 @@ def _extract_tax_invoice(lines: list[str]) -> tuple:
 # ── 거래명세서 ─────────────────────────────────────────────────────────
 
 def _extract_delivery_note(lines: list[str]) -> tuple:
+    # 날짜: 'YYYY/MM/DD' (거래일자 레이블) 또는 'YYYY년 MM월 DD일' (자유 형식)
     date_str = None
     for i, line in enumerate(lines):
         if line == "거래일자" and i + 1 < len(lines):
@@ -129,28 +130,35 @@ def _extract_delivery_note(lines: list[str]) -> tuple:
             if m:
                 date_str = m.group(1) + m.group(2) + m.group(3)
                 break
+    if not date_str:
+        for line in lines:
+            m = re.search(r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일", line)
+            if m:
+                date_str = f"{m.group(1)}{m.group(2).zfill(2)}{m.group(3).zfill(2)}"
+                break
 
-    # 공급자: (법인명) 첫 번째 매칭 → "공급자" 레이블 순으로 탐색
+    # 공급자: '상호(법인명)' 또는 '상호' 레이블로 탐색 (Format 1·2 모두 대응)
     supplier = None
-    matches = re.findall(r"\(법인명\)\s*(.+)", "\n".join(lines))
-    if matches:
-        supplier = matches[0].strip()
-    if not supplier:
-        for i, line in enumerate(lines):
-            if line in ("공급자", "상호") and i + 1 < len(lines):
+    for i, line in enumerate(lines):
+        if re.match(r"^상호", line):
+            # 같은 줄에 회사명이 있는 경우: '상호(법인명) 주식회사 산소프트'
+            m = re.match(r"^상호[^\s]*\s+(.+)", line)
+            if m and m.group(1).strip():
+                supplier = m.group(1).strip()
+                break
+            # 다음 줄에 회사명이 있는 경우: '상호' / '(주)카이저랩'
+            if i + 1 < len(lines):
                 candidate = lines[i + 1].strip()
-                if candidate and not re.match(r"^[\d\-]+$", candidate):
+                if candidate and not re.match(r"^[\d\-\s]+$", candidate):
                     supplier = candidate
                     break
 
+    # 거래처 (buyer): '거래처명' 레이블로 탐색
     recipient = None
     for i, line in enumerate(lines):
         if line == "거래처명" and i + 1 < len(lines):
             recipient = lines[i + 1].strip()
             break
-    # 거래처명 레이블이 없으면 (법인명) 두 번째 매칭 사용
-    if not recipient and len(matches) >= 2:
-        recipient = matches[1].strip()
 
     item_joyo = None
     for i, line in enumerate(lines):
@@ -205,11 +213,13 @@ def process_pdf(pdf_path: Path, doc_type: str, lines: list[str]) -> tuple[str, s
         date_part = date_str or "날짜미상"
         j = sanitize(joyo) if joyo else "적요미상"
 
-        if recipient and KAIZER_LAB in recipient:
-            s = sanitize(supplier) if supplier else "공급자미상"
-            return f"{date_part} 거래명세서({s}-{j}).pdf", "매입거래명세서"
-        else:
+        if supplier and KAIZER_LAB in supplier:
+            # 카이저랩이 공급자 → 매출
             r = sanitize(recipient) if recipient else "거래처미상"
             return f"{date_part} 거래명세서({r}-{j}).pdf", "거래명세서"
+        else:
+            # 다른 회사가 공급자 → 매입
+            s = sanitize(supplier) if supplier else "공급자미상"
+            return f"{date_part} 거래명세서({s}-{j}).pdf", "매입거래명세서"
 
     raise ValueError(f"알 수 없는 문서 유형: {doc_type}")
